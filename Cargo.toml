@@ -1,0 +1,20 @@
+[package]
+name = "rust_bounded_graph"
+version = "0.1.0"
+edition = "2021"
+description = "A thin newtype wrapper for `petgraph` to assist in the creation of graphs with restrictions on their edges"
+license = "MIT"
+repository = "https://github.com/dave-gray101/rust_bounded_graph"
+documentation = "https://docs.rs/rust_bounded_graph"
+homepage = "https://github.com/dave-gray101/rust_bounded_graph"
+keywords = ["petgraph", "bounded", "edges"]
+readme = "README.md"
+
+
+[dependencies]
+fixedbitset = "0.5.7"
+petgraph ="0.7.1"
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+[features]
+serde-1 = ["serde", "petgraph/serde-1"]
