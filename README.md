@@ -9,7 +9,7 @@ This crate is a simple wrapper around petgraph's Graph type. It exists to make i
 In order to do so, your Node type should implement the following trait:
 ```rust
 pub trait BoundedNode<Ix: IndexType = DefaultIx> {
-    fn can_add_edge(&self, existing_edges: usize, dir: Direction) -> bool;
+    fn can_add_edge(&self, dir: Direction, existing_edge_count: usize, other_node: &Self) -> bool;
 }
 ```
 
@@ -20,6 +20,11 @@ pub trait EdgeNumberBoundedNode<Ix: IndexType = DefaultIx> {
     fn max_outgoing_edges(&self) -> Ix;
 }
 ```
+This will provide a function 
+```rust
+has_edge_space(&self, dir: Direction, existing_edge_count: usize) -> bool
+```
+If you have no other requirements for your node type, implement the marker trait `SimpleEdgeNumberBoundedNode` to automatically use `has_edge_space` as `can_add_edge`
 
 ---
 

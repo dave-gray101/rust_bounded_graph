@@ -8,25 +8,30 @@ use serde::{Serialize, Deserialize};
 
 
 pub trait BoundedNode<Ix: IndexType = DefaultIx> {
-    fn can_add_edge(&self, existing_edges: usize, dir: Direction) -> bool;
+    fn can_add_edge(&self, dir: Direction, existing_edge_count: usize, other_node: &Self) -> bool;
 }
 
 pub trait EdgeNumberBoundedNode<Ix: IndexType = DefaultIx> {
     fn max_incoming_edges(&self) -> Ix;
     fn max_outgoing_edges(&self) -> Ix;
-}
 
-impl<Ix: IndexType, T: EdgeNumberBoundedNode<Ix>> BoundedNode<Ix> for T {
-    fn can_add_edge(&self, existing_edges: usize, dir: Direction) -> bool {
+    fn has_edge_space(&self, dir: Direction, existing_edge_count: usize) -> bool {
         match dir {
             Direction::Incoming => {
-                Ix::new(existing_edges) < self.max_incoming_edges()
+                Ix::new(existing_edge_count) < self.max_incoming_edges()
             }
             Direction::Outgoing => {
-                Ix::new(existing_edges) < self.max_outgoing_edges()
+                Ix::new(existing_edge_count) < self.max_outgoing_edges()
             }
         }
-    
+    }
+}
+
+pub trait SimpleEdgeNumberBoundedNode {}
+
+impl <Ix: IndexType, T: SimpleEdgeNumberBoundedNode + EdgeNumberBoundedNode> BoundedNode<Ix> for T {
+    fn can_add_edge(&self, dir: Direction, existing_edge_count: usize, _other_node: &Self) -> bool {
+        self.has_edge_space(dir, existing_edge_count)
     }
 }
 
@@ -43,14 +48,19 @@ impl<N: BoundedNode<Ix>, E, Ty: EdgeType, Ix: IndexType> BoundedGraph<N, E, Ty, 
         }
     }
 
-    pub fn can_add_edge(&self, node: NodeIndex<Ix>, dir: Direction) -> bool {
-        let incoming = self.graph.edges_directed(node, dir);
-        let weight = self.graph.node_weight(node);
-        match weight {
-            Some(weight) => {
-                weight.can_add_edge(incoming.count(), dir)
+    pub fn can_add_edge(&self, node: NodeIndex<Ix>, other: NodeIndex<Ix>) -> bool {
+
+        let outgoing = self.graph.edges_directed(node, Direction::Outgoing);
+        let o_weight = self.graph.node_weight(node);
+
+        let incoming = self.graph.edges_directed(other, Direction::Incoming);
+        let i_weight = self.graph.node_weight(other);
+        match (o_weight, i_weight) {
+            (Some(o_weight), Some(i_weight)) => {
+                o_weight.can_add_edge(Direction::Outgoing, outgoing.count(), i_weight) &&
+                i_weight.can_add_edge(Direction::Incoming, incoming.count(), o_weight)
             }
-            None => false
+            _ => false
         }
     }
 
@@ -91,12 +101,8 @@ impl<N: BoundedNode<Ix>, E, Ty: EdgeType, Ix: IndexType> BoundedGraph<N, E, Ty, 
     }
 
     pub fn add_edge(&mut self, source: NodeIndex<Ix>, target: NodeIndex<Ix>, edge: E) -> Result<EdgeIndex<Ix>, &'static str> {
-        if ! self.can_add_edge(source, Direction::Outgoing) {
-            return Err("Cannot add additional outgoing edge to source node");
-        }
-
-        if ! self.can_add_edge(target, Direction::Incoming) {
-            return Err("Cannot add additional incoming edge to target node");
+        if ! self.can_add_edge(source, target) {
+            return Err("Cannot add edge from source node to target node");
         }
         
         Ok(self.graph.add_edge(source, target, edge))
@@ -578,7 +584,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn petgraph_basics() {
+    fn edge_number_bounded_node() {
 
         #[derive(Debug, Default)]
         pub struct BoundedNodeIndex {
@@ -596,6 +602,7 @@ mod tests {
                 }
             }
         }
+
         impl<Ix: IndexType> EdgeNumberBoundedNode<Ix> for BoundedNodeIndex {
             fn max_incoming_edges(&self) -> Ix {
                 Ix::new(self.inputs)
@@ -605,6 +612,8 @@ mod tests {
                 Ix::new(self.outputs)
             }
         }
+
+        impl SimpleEdgeNumberBoundedNode for BoundedNodeIndex {}
 
         let mut deps = BoundedGraph::<BoundedNodeIndex, &str>::new();
         let pg = deps.add_node(BoundedNodeIndex::new("petgraph".to_string(), 0usize, 3usize));
@@ -616,13 +625,88 @@ mod tests {
             (pg, fb), (pg, qc),
             (qc, rand), (rand, libc), (qc, libc),
         ]);
+
+        println!("{:?}", Dot::with_config(deps.as_graph(), &[Config::EdgeNoLabel]));
+
         assert_eq!(deps[pg].name, "petgraph");
         assert_eq!(deps.edge_count(), 4);   // One should be missing.
         assert_eq!(deps.edges_directed(libc, Incoming).count(), 1); // It should be missing from here.
 
-        println!("{:?}", Dot::with_config(deps.as_graph(), &[Config::EdgeNoLabel]));
 
         deps.update_edge(qc, fb, "").unwrap();
         assert_eq!(deps.edge_count(), 5);
+    }
+
+    #[test]
+    fn advanced_node() {
+        #[derive(Debug, Default, PartialEq, Eq)]
+        pub enum Color {
+            #[default]
+            Red,
+            Blue,
+        }
+
+        #[derive(Debug, Default)]
+        pub struct ColoredBoundedNodeIndex<Ix: IndexType> {
+            name: String,
+            inputs: usize,
+            outputs: usize,
+            color: Color,
+            _phantom: std::marker::PhantomData<Ix>,
+        }
+
+        impl<Ix: IndexType> ColoredBoundedNodeIndex<Ix> {
+            pub fn new(name: String, inputs: usize, outputs: usize, color: Color) -> Self {
+                Self {
+                    name,
+                    inputs,
+                    outputs,
+                    color,
+                    _phantom: std::marker::PhantomData::<Ix>,
+                }
+            }
+        }
+
+        trait ColoredBoundedNode<Ix: IndexType> : BoundedNode<Ix> + EdgeNumberBoundedNode<Ix> {
+            fn color(&self) -> &Color;
+        }
+
+        impl<Ix: IndexType> ColoredBoundedNode<Ix> for ColoredBoundedNodeIndex<Ix> {
+            fn color(&self) -> &Color {
+                &self.color
+            }
+        }
+
+
+        impl<Ix: IndexType> EdgeNumberBoundedNode<Ix> for ColoredBoundedNodeIndex<Ix> {
+            fn max_incoming_edges(&self) -> Ix {
+                Ix::new(self.inputs)
+            }
+
+            fn max_outgoing_edges(&self) -> Ix {
+                Ix::new(self.outputs)
+            }
+        }
+
+        impl<Ix: IndexType> BoundedNode<Ix> for ColoredBoundedNodeIndex<Ix> {
+            fn can_add_edge(&self, dir: Direction, existing_edge_count: usize, other_node: &Self) -> bool {
+                if self.color != other_node.color {
+                    return false;
+                }
+                self.has_edge_space(dir, existing_edge_count)
+            }
+        }
+
+        
+        let mut deps = BoundedGraph::<ColoredBoundedNodeIndex<usize>, &str, Directed, usize>::new();
+        let pg = deps.add_node(ColoredBoundedNodeIndex::new("petgraph".to_string(), 0usize, 3usize, Color::Red));
+        let fb = deps.add_node(ColoredBoundedNodeIndex::new("fixedbitset".to_string(), 4usize, 0usize, Color::Red));
+        let qc = deps.add_node(ColoredBoundedNodeIndex::new("quickcheck".to_string(), 1usize, 2usize, Color::Blue));
+        deps.extend_with_edges(&[
+            (pg, fb), (pg, qc),
+        ]);
+        println!("{:?}", Dot::with_config(deps.as_graph(), &[Config::EdgeNoLabel]));
+        assert_eq!(deps[pg].name, "petgraph");
+        assert_eq!(deps[pg].color(), &Color::Red);
     }
 }

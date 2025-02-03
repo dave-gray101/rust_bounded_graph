@@ -1,6 +1,6 @@
 [package]
 name = "rust_bounded_graph"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "A thin newtype wrapper for `petgraph` to assist in the creation of graphs with restrictions on their edges"
 license = "MIT"
